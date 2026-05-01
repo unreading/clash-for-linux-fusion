@@ -264,7 +264,7 @@ EOF
     printf "║"
     printf "\033[${TOTAL_WIDTH}G║\n"
     _print_ui_line "💡 SSH Forward 后访问：" "http://localhost:${ctrl_port}/ui"
-    _print_ui_line "⚠️  校园网可能隔离同网段互访，建议用 SSH Forward" ""
+    _print_ui_line "⚠️  端口为本地转发端口，默认与服务器端口相同" ""
     printf "║"
     printf "\033[${TOTAL_WIDTH}G║\n"
     _print_ui_line "🎯 当前分组：" "$group_display"
