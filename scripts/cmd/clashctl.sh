@@ -705,29 +705,25 @@ EOF
 }
 
 function clashsub() {
-    case "$1" in
+    local sub_cmd="$1"
+    [ $# -gt 0 ] && shift
+    case "$sub_cmd" in
     add)
-        shift
         _sub_add "$@"
         ;;
     del)
-        shift
         _sub_del "$@"
         ;;
     list | ls | '')
-        shift
         _sub_list "$@"
         ;;
     use | ch)
-        shift
         _sub_use "$@"
         ;;
     update)
-        shift
         _sub_update "$@"
         ;;
     log)
-        shift
         _sub_log "$@"
         ;;
     -h | --help | *)
@@ -738,7 +734,7 @@ Usage:
   clashsub COMMAND [OPTIONS]
 
 Commands:
-  add <url>       添加订阅
+  add <url> [name] 添加订阅
   ls              查看订阅
   del <id>        删除订阅
   use <id>        使用订阅 (别名: ch)
@@ -754,11 +750,17 @@ EOF
     esac
 }
 _sub_add() {
-    local url=$1
+    local url="$1"
+    local name="$2"
     [ -z "$url" ] && {
         echo -n "$(_okcat '✈️ ' '请输入要添加的订阅链接：')"
         read -r url
         [ -z "$url" ] && _error_quit "订阅链接不能为空"
+    }
+    [ -z "$name" ] && {
+        echo -n "$(_okcat '🏷️ ' '请输入订阅名称 [默认: default]：')"
+        read -r name
+        [ -z "$name" ] && name="default"
     }
     _get_url_by_id "$id" >/dev/null && _error_quit "该订阅链接已存在"
 
@@ -776,12 +778,13 @@ _sub_add() {
          .profiles = (.profiles // []) + 
          [{
            \"id\": $id,
+           \"name\": \"$name\",
            \"path\": \"$profile_path\",
            \"url\": \"$url\"
          }]
     " "$CLASH_PROFILES_META"
-    _logging_sub "➕ 已添加订阅：[$id] $url"
-    _okcat '🎉' "订阅已添加：[$id] $url"
+    _logging_sub "➕ 已添加订阅：[$id] $name ($url)"
+    _okcat '🎉' "订阅已添加：[$id] $name"
 }
 _sub_del() {
     local id=$1
@@ -801,7 +804,24 @@ _sub_del() {
     _okcat '🎉' "订阅已删除：[$id] $url"
 }
 _sub_list() {
-    "$BIN_YQ" "$CLASH_PROFILES_META"
+    local current_use=$("$BIN_YQ" '.use // ""' "$CLASH_PROFILES_META")
+    local current_name=""
+    [ -n "$current_use" ] && current_name=$("$BIN_YQ" ".profiles[] | select(.id == $current_use) | .name // \"\"" "$CLASH_PROFILES_META" 2>/dev/null)
+    _okcat "当前订阅: [${current_use}] ${current_name:-未知}"
+    echo ""
+    printf " %-2s  %-12s %-4s %s\n" "St" "Name" "ID" "URL"
+    echo "----------------------------------------"
+    "$BIN_YQ" '.profiles // [] | .[]' "$CLASH_PROFILES_META" | while read -r entry; do
+        :
+    done
+    local entries=$("$BIN_YQ" -o=json '.profiles // []' "$CLASH_PROFILES_META" 2>/dev/null)
+    echo "$entries" | jq -r '.[] | "\(.id)|\(.name // "unnamed")|\(.url // "")"' | while IFS='|' read -r id name url; do
+        local mark=" "
+        [ "$id" = "$current_use" ] && mark="*"
+        local display_url="$url"
+        [ ${#display_url} -gt 60 ] && display_url="${display_url:0:57}..."
+        printf " %s  %-12s [%s] %s\n" "$mark" "$name" "$id" "$display_url"
+    done
 }
 _sub_use() {
     "$BIN_YQ" -e '.profiles // [] | length == 0' "$CLASH_PROFILES_META" >&/dev/null &&
