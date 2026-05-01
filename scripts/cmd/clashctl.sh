@@ -907,6 +907,17 @@ _sub_log() {
 # ==============================================================================
 
 _interactive_node_select() {
+    _delay_color() {
+        local d=$1
+        if [ "$d" -lt 200 ] 2>/dev/null; then
+            printf "\033[32m"
+        elif [ "$d" -lt 500 ] 2>/dev/null; then
+            printf "\033[33m"
+        else
+            printf "\033[31m"
+        fi
+    }
+
     local group_name="$1"
     local direct_target="$2"
     local group_enc=$(urlencode "$group_name")
@@ -945,6 +956,20 @@ _interactive_node_select() {
      echo "📋 [$group_name] 可选节点:"
     local current_node=$(echo "$group_resp" | jq -r '.now')
 
+    echo "⚡ 正在测速..."
+    local pids=()
+    for node in "${nodes[@]}"; do
+        local node_type=$(echo "$group_resp" | jq -r --arg n "$node" '.type // ""')
+        [ "$node_type" = "URLTest" ] || [ "$node_type" = "Selector" ] || [ "$node_type" = "Fallback" ] || [ "$node_type" = "LoadBalance" ] && continue
+        local nenc=$(urlencode "$node")
+        curl_api "/proxies/$nenc/delay?timeout=3000&url=http://www.gstatic.com/generate_204" >/dev/null 2>&1 &
+        pids+=($!)
+    done
+    for pid in "${pids[@]}"; do
+        wait "$pid" 2>/dev/null
+    done
+    echo -e "\r✅ 测速完成              "
+
     local all_proxies=$(curl_api "/proxies")
 
     local j=1
@@ -952,29 +977,41 @@ _interactive_node_select() {
         local mark=" "
         [ "$node" = "$current_node" ] && mark="*"
 
-        local delay="N/A"
+        local delay=""
+        local delay_color=""
         local extra=""
         local node_type=$(echo "$all_proxies" | jq -r --arg n "$node" '.proxies[$n].type // ""')
 
         if [ "$node_type" = "URLTest" ] || [ "$node_type" = "Selector" ] || [ "$node_type" = "Fallback" ] || [ "$node_type" = "LoadBalance" ]; then
+            local sub_now=$(echo "$all_proxies" | jq -r --arg n "$node" '.proxies[$n].now // ""')
             local best=$(echo "$all_proxies" | jq -r --arg n "$node" '
                 [.proxies[$n].all[] | . as $name | $root.proxies[$name].history[-1].delay // 99999] | map(select(. > 0 and . < 99999)) | min
             ' --argjson root "$all_proxies")
             if [ -n "$best" ] && [ "$best" != "null" ] && [ "$best" -lt 99999 ] 2>/dev/null; then
                 delay="Best:${best}ms"
+                delay_color=$(_delay_color "$best")
             fi
-            local sub_now=$(echo "$all_proxies" | jq -r --arg n "$node" '.proxies[$n].now // ""')
             if [ -n "$sub_now" ] && [ "$sub_now" != "null" ] && [ "$sub_now" != "" ]; then
                 extra=" → $sub_now"
             fi
         else
             local d=$(echo "$all_proxies" | jq -r --arg n "$node" '.proxies[$n].history[-1].delay // 0')
             if [ -n "$d" ] && [ "$d" != "null" ] && [ "$d" -gt 0 ] 2>/dev/null; then
-                delay="${d}ms"
+                if [ "$d" -ge 5000 ]; then
+                    delay="超时"
+                    delay_color="\033[31m"
+                else
+                    delay="${d}ms"
+                    delay_color=$(_delay_color "$d")
+                fi
+            else
+                delay="不可用"
+                delay_color="\033[31m"
             fi
         fi
 
-        printf "  %s %2d) %-34s %-10s%s\n" "$mark" "$j" "$node" "$delay" "$extra"
+        [ -z "$delay" ] && { delay="N/A"; delay_color=""; }
+        printf "  %s %2d) %-32s ${delay_color}%-10s\033[0m%s\n" "$mark" "$j" "$node" "$delay" "$extra"
         ((j++))
     done
 
