@@ -1297,7 +1297,7 @@ EOF
         return 0
         ;;
     esac
-    local action=$1; shift || true
+    local action=$1; [ $# -gt 0 ] && shift
     case "$action" in
     ""|status)
         _load_port_preferences
