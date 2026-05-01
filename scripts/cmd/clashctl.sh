@@ -942,39 +942,41 @@ _interactive_node_select() {
         return 0
     fi
 
-    echo "📋 [$group_name] 可选节点:"
+     echo "📋 [$group_name] 可选节点:"
     local current_node=$(echo "$group_resp" | jq -r '.now')
-    local items=()
-    local j=1
 
+    local all_proxies=$(curl_api "/proxies")
+
+    local j=1
     for node in "${nodes[@]}"; do
         local mark=" "
         [ "$node" = "$current_node" ] && mark="*"
-        items+=("$(printf "%s[%2d] %s" "$mark" "$j" "$node")")
+
+        local delay="N/A"
+        local extra=""
+        local node_type=$(echo "$all_proxies" | jq -r --arg n "$node" '.proxies[$n].type // ""')
+
+        if [ "$node_type" = "URLTest" ] || [ "$node_type" = "Selector" ] || [ "$node_type" = "Fallback" ] || [ "$node_type" = "LoadBalance" ]; then
+            local best=$(echo "$all_proxies" | jq -r --arg n "$node" '
+                [.proxies[$n].all[] | . as $name | $root.proxies[$name].history[-1].delay // 99999] | map(select(. > 0 and . < 99999)) | min
+            ' --argjson root "$all_proxies")
+            if [ -n "$best" ] && [ "$best" != "null" ] && [ "$best" -lt 99999 ] 2>/dev/null; then
+                delay="Best:${best}ms"
+            fi
+            local sub_now=$(echo "$all_proxies" | jq -r --arg n "$node" '.proxies[$n].now // ""')
+            if [ -n "$sub_now" ] && [ "$sub_now" != "null" ] && [ "$sub_now" != "" ]; then
+                extra=" → $sub_now"
+            fi
+        else
+            local d=$(echo "$all_proxies" | jq -r --arg n "$node" '.proxies[$n].history[-1].delay // 0')
+            if [ -n "$d" ] && [ "$d" != "null" ] && [ "$d" -gt 0 ] 2>/dev/null; then
+                delay="${d}ms"
+            fi
+        fi
+
+        printf "  %s %2d) %-34s %-10s%s\n" "$mark" "$j" "$node" "$delay" "$extra"
         ((j++))
     done
-
-    local term_cols=$(tput cols)
-    local max_col_width=45
-    local col_count=$((term_cols / max_col_width))
-    [ "$col_count" -lt 1 ] && col_count=1
-    [ "$col_count" -gt 5 ] && col_count=5
-
-    (
-        local total=${#items[@]}
-        local k=0
-        while [ $k -lt $total ]; do
-            local line=""
-            for ((c = 0; c < col_count; c++)); do
-                local idx=$((k + c))
-                if [ $idx -lt $total ]; then
-                    line+="${items[$idx]}|"
-                fi
-            done
-            echo "${line%|}"
-            ((k += col_count))
-        done
-    ) | column -t -s '|'
 
     printf "\n👉 请输入节点编号: "
     read -r n_idx
