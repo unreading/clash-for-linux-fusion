@@ -306,7 +306,7 @@ _clashui_update() {
 }
 
 _merge_config() {
-    cat "$CLASH_CONFIG_RUNTIME" >"$CLASH_CONFIG_TEMP" 2>/dev/null
+    cat "$CLASH_CONFIG_RUNTIME" >|"$CLASH_CONFIG_TEMP" 2>/dev/null
     # shellcheck disable=SC2016
     "$BIN_YQ" eval-all '
       ########################################
@@ -383,7 +383,7 @@ _merge_config() {
       )
     ' "$CLASH_CONFIG_BASE" "$CLASH_CONFIG_MIXIN" >"$CLASH_CONFIG_RUNTIME"
     _valid_config "$CLASH_CONFIG_RUNTIME" || {
-        cat "$CLASH_CONFIG_TEMP" >"$CLASH_CONFIG_RUNTIME"
+        cat "$CLASH_CONFIG_TEMP" >|"$CLASH_CONFIG_RUNTIME"
         _error_quit "验证失败：请检查 Mixin 配置"
     }
 }
@@ -718,7 +718,7 @@ function clashsub() {
         shift
         _sub_list "$@"
         ;;
-    use)
+    use | ch)
         shift
         _sub_use "$@"
         ;;
@@ -741,7 +741,7 @@ Commands:
   add <url>       添加订阅
   ls              查看订阅
   del <id>        删除订阅
-  use <id>        使用订阅
+  use <id>        使用订阅 (别名: ch)
   update [id]     更新订阅
   log             订阅日志
 
@@ -816,7 +816,7 @@ _sub_use() {
     local profile_path url
     profile_path=$(_get_path_by_id "$id") || _error_quit "订阅 id 不存在，请检查"
     url=$(_get_url_by_id "$id")
-    cat "$profile_path" >"$CLASH_CONFIG_BASE"
+    cat "$profile_path" >|"$CLASH_CONFIG_BASE"
     _merge_config_restart
     "$BIN_YQ" -i ".use = $id" "$CLASH_PROFILES_META"
     _logging_sub "🔥 订阅已切换为：[$id] $url"
@@ -870,7 +870,7 @@ _sub_update() {
     转换日志：$BIN_SUBCONVERTER_LOG"
     }
     _logging_sub "✅ 订阅更新成功：[$id] $url"
-    cat "$CLASH_CONFIG_TEMP" >"$profile_path"
+    cat "$CLASH_CONFIG_TEMP" >|"$profile_path"
     use=$("$BIN_YQ" '.use // ""' "$CLASH_PROFILES_META")
     [ "$use" = "$id" ] && clashsub use "$use" && return
     _okcat '订阅已更新'
@@ -1229,6 +1229,18 @@ EOF
         [ -z "$grp" ] && { echo "❌ 无法识别主分组"; return 1; }
         [ -z "$target" ] && { _interactive_node_select "$grp" ""; return 0; }
         echo "🔍 主分组: $grp"; _interactive_node_select "$grp" "$target"
+        ;;
+
+    '')
+        echo "📋 快速切换菜单"
+        echo "----------------------------------------"
+        echo " -n [<node>]   切换节点"
+        echo " -g [<group>]  切换策略组"
+        echo " -s            切换订阅"
+        echo " -m [<mode>]   切换模式 [rule|global|direct]"
+        echo " <node_name>   直接切换到指定节点"
+        echo "----------------------------------------"
+        return 0
         ;;
 
     *)
