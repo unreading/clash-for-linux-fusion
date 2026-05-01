@@ -959,17 +959,16 @@ _interactive_node_select() {
     local all_proxies=$(curl_api "/proxies")
 
     echo "⚡ 正在测速..."
-    local pids=()
-    for node in "${nodes[@]}"; do
-        local node_type=$(echo "$all_proxies" | jq -r --arg n "$node" '.proxies[$n].type // ""')
-        [ "$node_type" = "URLTest" ] || [ "$node_type" = "Selector" ] || [ "$node_type" = "Fallback" ] || [ "$node_type" = "LoadBalance" ] && continue
-        local nenc=$(urlencode "$node")
-        curl_api "/proxies/$nenc/delay?timeout=3000&url=http://www.gstatic.com/generate_204" >/dev/null 2>&1 &
-        pids+=($!)
-    done
-    for pid in "${pids[@]}"; do
-        wait "$pid" 2>/dev/null
-    done
+    (
+        for node in "${nodes[@]}"; do
+            local node_type=$(echo "$all_proxies" | jq -r --arg n "$node" '.proxies[$n].type // ""')
+            [ "$node_type" = "URLTest" ] || [ "$node_type" = "Selector" ] || [ "$node_type" = "Fallback" ] || [ "$node_type" = "LoadBalance" ] && continue
+            local nenc=$(urlencode "$node")
+            curl_api "/proxies/$nenc/delay?timeout=3000&url=http://www.gstatic.com/generate_204" >/dev/null 2>&1
+        done
+    ) &
+    local test_pid=$!
+    wait "$test_pid" 2>/dev/null
     echo -e "\r✅ 测速完成              "
 
     all_proxies=$(curl_api "/proxies")
