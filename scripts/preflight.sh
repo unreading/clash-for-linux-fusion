@@ -375,6 +375,8 @@ _install_service() {
         -e "s#placeholder_watch_proxy#${service_watch_proxy[*]}#g" \
         "$CLASH_CMD_DIR/clashctl.sh" "$CLASH_CMD_DIR/common.sh"
 
+    sed -i "s#> $FILE_LOG#>| $FILE_LOG#g" "$CLASH_CMD_DIR/clashctl.sh"
+
     "${service_enable[@]}" >&/dev/null && _okcat '🚀' '已设置开机自启'
     ((${#service_reload[@]})) && "${service_reload[@]}"
 }
