@@ -956,10 +956,12 @@ _interactive_node_select() {
      echo "📋 [$group_name] 可选节点:"
     local current_node=$(echo "$group_resp" | jq -r '.now')
 
+    local all_proxies=$(curl_api "/proxies")
+
     echo "⚡ 正在测速..."
     local pids=()
     for node in "${nodes[@]}"; do
-        local node_type=$(echo "$group_resp" | jq -r --arg n "$node" '.type // ""')
+        local node_type=$(echo "$all_proxies" | jq -r --arg n "$node" '.proxies[$n].type // ""')
         [ "$node_type" = "URLTest" ] || [ "$node_type" = "Selector" ] || [ "$node_type" = "Fallback" ] || [ "$node_type" = "LoadBalance" ] && continue
         local nenc=$(urlencode "$node")
         curl_api "/proxies/$nenc/delay?timeout=3000&url=http://www.gstatic.com/generate_204" >/dev/null 2>&1 &
@@ -970,7 +972,7 @@ _interactive_node_select() {
     done
     echo -e "\r✅ 测速完成              "
 
-    local all_proxies=$(curl_api "/proxies")
+    all_proxies=$(curl_api "/proxies")
 
     local j=1
     for node in "${nodes[@]}"; do
