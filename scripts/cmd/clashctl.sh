@@ -163,6 +163,53 @@ function clashlog() {
     placeholder_log "$@"
 }
 
+_get_current_node_info() {
+    local mode=$(curl_api "/configs" | jq -r .mode)
+    _NODE_GROUP="" _NODE_DISPLAY="" _NODE_DELAY="N/A" _NODE_MODE="$mode"
+
+    if [ "$mode" = "global" ]; then
+        _NODE_GROUP="GLOBAL (全局路由)"
+        local global_info=$(curl_api "/proxies/GLOBAL")
+        local global_node=$(echo "$global_info" | jq -r .now)
+        if [ -n "$global_node" ] && [ "$global_node" != "null" ]; then
+            _NODE_DISPLAY="$global_node"
+            local node_enc=$(urlencode "$global_node")
+            local d=$(curl_api "/proxies/$node_enc/delay?timeout=2000&url=http://www.gstatic.com/generate_204" | jq -r '.delay // "N/A"')
+            [ "$d" != "N/A" ] && _NODE_DELAY="${d}ms"
+        else
+            _NODE_DISPLAY="未知"
+        fi
+    else
+        if [ -f "$CLASH_CONFIG_RUNTIME" ]; then
+            _NODE_GROUP=$("$BIN_YQ" '.proxy-groups[] | select(.type == "select") | .name' "$CLASH_CONFIG_RUNTIME" 2>/dev/null | head -n 1)
+        fi
+        if [ -z "$_NODE_GROUP" ]; then
+            local resp=$(curl_api "/proxies")
+            _NODE_GROUP=$(echo "$resp" | jq -r '.proxies | to_entries[] | select(.value.type=="Selector" and .key!="GLOBAL" and .key!="Global") | .key' | head -n 1)
+        fi
+        [ -z "$_NODE_GROUP" ] && _NODE_GROUP="无法识别"
+
+        local group_enc=$(urlencode "$_NODE_GROUP")
+        local group_info=$(curl_api "/proxies/$group_enc")
+        local node_name=$(echo "$group_info" | jq -r .now)
+        _NODE_DISPLAY="$node_name"
+
+        if [ -n "$node_name" ] && [ "$node_name" != "null" ]; then
+            local node_enc=$(urlencode "$node_name")
+            local node_type=$(curl_api "/proxies" | jq -r --arg n "$node_name" '.proxies[$n].type // ""')
+            if [ "$node_type" = "URLTest" ] || [ "$node_type" = "Selector" ] || [ "$node_type" = "Fallback" ] || [ "$node_type" = "LoadBalance" ]; then
+                local sub_info=$(curl_api "/proxies/$node_enc")
+                local sub_now=$(echo "$sub_info" | jq -r '.now // ""')
+                [ -n "$sub_now" ] && [ "$sub_now" != "null" ] && _NODE_DISPLAY="$node_name → $sub_now"
+                _NODE_DELAY="Best:$(echo "$sub_info" | jq -r '[.all[] | . as $name | $root.proxies[$name].history[-1].delay // 99999] | map(select(. > 0 and . < 99999)) | min // "N/A"' --argjson root "$(curl_api "/proxies")")ms"
+            else
+                local d=$(curl_api "/proxies/$node_enc/delay?timeout=2000&url=http://www.gstatic.com/generate_204" | jq -r '.delay // "N/A"')
+                [ "$d" != "N/A" ] && _NODE_DELAY="${d}ms"
+            fi
+        fi
+    fi
+}
+
 function clashui() {
     case "$1" in
     update)
@@ -192,49 +239,13 @@ EOF
     local local_ip=$EXT_IP
     local local_address="http://${local_ip}:${EXT_PORT}/ui"
 
-    local mode=$(curl_api "/configs" | jq -r .mode)
-    local group_display="" node_display="" delay_display="N/A"
-
-    if [ "$mode" = "global" ]; then
-        group_display="GLOBAL (全局路由)"
-        local global_info=$(curl_api "/proxies/GLOBAL")
-        local global_node=$(echo "$global_info" | jq -r .now)
-        if [ -n "$global_node" ] && [ "$global_node" != "null" ]; then
-            node_display="$global_node"
-            local node_enc=$(urlencode "$node_display")
-            local d=$(curl_api "/proxies/$node_enc/delay?timeout=2000&url=http://www.gstatic.com/generate_204" | jq -r '.delay // "N/A"')
-            [ "$d" != "N/A" ] && delay_display="${d}ms"
-        else
-            node_display="未知"
-        fi
-    else
-        local group=""
-        if [ -f "$CLASH_CONFIG_RUNTIME" ]; then
-            group=$("$BIN_YQ" '.proxy-groups[] | select(.type == "select") | .name' "$CLASH_CONFIG_RUNTIME" 2>/dev/null | head -n 1)
-        fi
-        if [ -z "$group" ]; then
-            local resp=$(curl_api "/proxies")
-            group=$(echo "$resp" | jq -r '.proxies | to_entries[] | select(.value.type=="Selector" and .key!="GLOBAL" and .key!="Global") | .key' | head -n 1)
-        fi
-        [ -z "$group" ] && group="Proxy"
-        group_display="$group"
-        local group_enc=$(urlencode "$group")
-        local node_name=$(curl_api "/proxies/$group_enc" | jq -r .now)
-        if [[ -n "$node_name" && "$node_name" != "null" ]]; then
-            node_display="$node_name"
-            local node_enc=$(urlencode "$node_name")
-            local d=$(curl_api "/proxies/$node_enc/delay?timeout=2000&url=http://www.gstatic.com/generate_204" | jq -r '.delay // "N/A"')
-            [ "$d" != "N/A" ] && delay_display="${d}ms"
-        else
-            node_display="无法获取"
-        fi
-    fi
+    _get_current_node_info
 
     local secret=$(_get_secret)
     local ctrl_port=${EXT_PORT}
 
     local max_len=0
-    for text in "$public_address" "$local_address" "$URL_CLASH_UI" "$node_display" "$group_display" "SSH Tunnel: http://localhost:LOCAL_PORT/ui"; do
+    for text in "$public_address" "$local_address" "$URL_CLASH_UI" "$_NODE_DISPLAY" "$_NODE_GROUP" "SSH Tunnel: http://localhost:LOCAL_PORT/ui"; do
         [ ${#text} -gt $max_len ] && max_len=${#text}
     done
     local TOTAL_WIDTH=$(( max_len + 16 ))
@@ -267,9 +278,9 @@ EOF
     _print_ui_line "⚠️  端口为本地转发端口，默认与服务器端口相同" ""
     printf "║"
     printf "\033[${TOTAL_WIDTH}G║\n"
-    _print_ui_line "🎯 当前分组：" "$group_display"
-    _print_ui_line "🚀 当前节点：" "$node_display"
-    _print_ui_line "⏱️  延迟：" "$delay_display"
+    _print_ui_line "🎯 当前分组：" "$_NODE_GROUP"
+    _print_ui_line "🚀 当前节点：" "$_NODE_DISPLAY"
+    _print_ui_line "⏱️  延迟：" "$_NODE_DELAY"
     printf "╚%s╝\n\n" "$line_inner"
 }
 
@@ -1065,52 +1076,9 @@ EOF
 
     clashstatus >&/dev/null || { _failcat "$KERNEL_NAME 未运行"; return 1; }
 
-    local mode=$(curl_api "/configs" | jq -r .mode)
-    local group_display="" node_display="" delay_display="N/A"
+    _get_current_node_info
 
-    if [ "$mode" = "global" ]; then
-        group_display="GLOBAL (全局路由)"
-        local global_info=$(curl_api "/proxies/GLOBAL")
-        local global_node=$(echo "$global_info" | jq -r .now)
-        if [ -n "$global_node" ] && [ "$global_node" != "null" ]; then
-            node_display="$global_node"
-            local node_enc=$(urlencode "$node_display")
-            local d=$(curl_api "/proxies/$node_enc/delay?timeout=2000&url=http://www.gstatic.com/generate_204" | jq -r '.delay // "N/A"')
-            [ "$d" != "N/A" ] && delay_display="${d}ms"
-        else
-            node_display="未知"
-        fi
-    else
-        if [ -f "$CLASH_CONFIG_RUNTIME" ]; then
-            group_display=$("$BIN_YQ" '.proxy-groups[] | select(.type == "select") | .name' "$CLASH_CONFIG_RUNTIME" 2>/dev/null | head -n 1)
-        fi
-        if [ -z "$group_display" ]; then
-            local resp=$(curl_api "/proxies")
-            group_display=$(echo "$resp" | jq -r '.proxies | to_entries[] | select(.value.type=="Selector" and .key!="GLOBAL" and .key!="Global") | .key' | head -n 1)
-        fi
-        [ -z "$group_display" ] && group_display="无法识别"
-
-        local group_enc=$(urlencode "$group_display")
-        local group_info=$(curl_api "/proxies/$group_enc")
-        local node_name=$(echo "$group_info" | jq -r .now)
-        node_display="$node_name"
-
-        if [ -n "$node_name" ] && [ "$node_name" != "null" ]; then
-            local node_enc=$(urlencode "$node_name")
-            local node_type=$(curl_api "/proxies" | jq -r --arg n "$node_name" '.proxies[$n].type // ""')
-            if [ "$node_type" = "URLTest" ] || [ "$node_type" = "Selector" ] || [ "$node_type" = "Fallback" ] || [ "$node_type" = "LoadBalance" ]; then
-                local sub_info=$(curl_api "/proxies/$node_enc")
-                local sub_now=$(echo "$sub_info" | jq -r '.now // ""')
-                [ -n "$sub_now" ] && [ "$sub_now" != "null" ] && node_display="$node_name → $sub_now"
-                delay_display="Best:$(echo "$sub_info" | jq -r '[.all[] | . as $name | $root.proxies[$name].history[-1].delay // 99999] | map(select(. > 0 and . < 99999)) | min // "N/A"' --argjson root "$(curl_api "/proxies")")ms"
-            else
-                local d=$(curl_api "/proxies/$node_enc/delay?timeout=2000&url=http://www.gstatic.com/generate_204" | jq -r '.delay // "N/A"')
-                [ "$d" != "N/A" ] && delay_display="${d}ms"
-            fi
-        fi
-    fi
-
-    printf "🎯 主分组: %s\n🚀 节点:  %s\n📶 延迟:  %s\n🛡️  模式:  %s\n" "$group_display" "$node_display" "$delay_display" "$mode"
+    printf "🎯 主分组: %s\n🚀 节点:  %s\n📶 延迟:  %s\n🛡️  模式:  %s\n" "$_NODE_GROUP" "$_NODE_DISPLAY" "$_NODE_DELAY" "$_NODE_MODE"
 }
 
 function clashgroup() {
