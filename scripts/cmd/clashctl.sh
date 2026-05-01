@@ -230,8 +230,11 @@ EOF
         fi
     fi
 
+    local secret=$(_get_secret)
+    local ctrl_port=${EXT_PORT}
+
     local max_len=0
-    for text in "$public_address" "$local_address" "$URL_CLASH_UI" "$node_display" "$group_display"; do
+    for text in "$public_address" "$local_address" "$URL_CLASH_UI" "$node_display" "$group_display" "SSH Tunnel: http://localhost:LOCAL_PORT/ui"; do
         [ ${#text} -gt $max_len ] && max_len=${#text}
     done
     local TOTAL_WIDTH=$(( max_len + 16 ))
@@ -251,10 +254,17 @@ EOF
     printf "╔%s╗\n" "$line_inner"
     _print_ui_line "$(_okcat 'Web 控制台')" ""
     printf "║%s║\n" "$line_inner"
-    _print_ui_line "🔓 注意放行端口：" "$EXT_PORT"
+    _print_ui_line "🔓 Host: " "127.0.0.1:$ctrl_port"
+    _print_ui_line "🔑 Secret: " "$secret"
+    printf "║"
+    printf "\033[${TOTAL_WIDTH}G║\n"
     _print_ui_line "🏠 内网：" "$local_address"
     _print_ui_line "🌏 公网：" "$public_address"
     _print_ui_line "☁️  公共：" "$URL_CLASH_UI"
+    printf "║"
+    printf "\033[${TOTAL_WIDTH}G║\n"
+    _print_ui_line "💡 SSH Forward 后访问：" "http://localhost:LOCAL_PORT/ui"
+    _print_ui_line "   Termius Port Forward：" "Local→$ctrl_port Remote→$ctrl_port"
     printf "║"
     printf "\033[${TOTAL_WIDTH}G║\n"
     _print_ui_line "🎯 当前分组：" "$group_display"
