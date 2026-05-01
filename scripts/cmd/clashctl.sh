@@ -381,7 +381,7 @@ _merge_config() {
         ($inj | .[$g.name] // []) as $extra |
         .proxies = (.proxies + $extra | unique)
       )
-    ' "$CLASH_CONFIG_BASE" "$CLASH_CONFIG_MIXIN" >"$CLASH_CONFIG_RUNTIME"
+    ' "$CLASH_CONFIG_BASE" "$CLASH_CONFIG_MIXIN" >|"$CLASH_CONFIG_RUNTIME"
     _valid_config "$CLASH_CONFIG_RUNTIME" || {
         cat "$CLASH_CONFIG_TEMP" >|"$CLASH_CONFIG_RUNTIME"
         _error_quit "验证失败：请检查 Mixin 配置"
@@ -958,18 +958,29 @@ _interactive_node_select() {
 
     local all_proxies=$(curl_api "/proxies")
 
-    echo "⚡ 正在测速..."
-    (
-        for node in "${nodes[@]}"; do
-            local node_type=$(echo "$all_proxies" | jq -r --arg n "$node" '.proxies[$n].type // ""')
-            [ "$node_type" = "URLTest" ] || [ "$node_type" = "Selector" ] || [ "$node_type" = "Fallback" ] || [ "$node_type" = "LoadBalance" ] && continue
-            local nenc=$(urlencode "$node")
-            curl_api "/proxies/$nenc/delay?timeout=3000&url=http://www.gstatic.com/generate_204" >/dev/null 2>&1
-        done
-    ) &
-    local test_pid=$!
-    wait "$test_pid" 2>/dev/null
-    echo -e "\r✅ 测速完成              "
+    local leaf_nodes=()
+    for node in "${nodes[@]}"; do
+        local node_type=$(echo "$all_proxies" | jq -r --arg n "$node" '.proxies[$n].type // ""')
+        [ "$node_type" = "URLTest" ] || [ "$node_type" = "Selector" ] || [ "$node_type" = "Fallback" ] || [ "$node_type" = "LoadBalance" ] && continue
+        leaf_nodes+=("$node")
+    done
+    local leaf_count=${#leaf_nodes[@]}
+
+    echo "⚡ 正在测速 (0/$leaf_count)..."
+    local tmpdir=$(mktemp -d)
+    local idx=0
+    for node in "${leaf_nodes[@]}"; do
+        local nenc=$(urlencode "$node")
+        (curl_api "/proxies/$nenc/delay?timeout=3000&url=http://www.gstatic.com/generate_204" >/dev/null 2>&1; touch "$tmpdir/$idx") &>/dev/null &
+        ((idx++))
+    done
+    while [ "$(ls "$tmpdir" 2>/dev/null | wc -l)" -lt "$leaf_count" ]; do
+        local finished=$(ls "$tmpdir" 2>/dev/null | wc -l)
+        printf "\r⚡ 测速中... %d/%d" "$finished" "$leaf_count"
+        sleep 0.3
+    done
+    rm -rf "$tmpdir"
+    echo -e "\r✅ 测速完成 ($leaf_count 个节点)              "
 
     all_proxies=$(curl_api "/proxies")
 
@@ -1070,13 +1081,22 @@ EOF
         [ -z "$group_display" ] && group_display="无法识别"
 
         local group_enc=$(urlencode "$group_display")
-        local node_name=$(curl_api "/proxies/$group_enc" | jq -r .now)
+        local group_info=$(curl_api "/proxies/$group_enc")
+        local node_name=$(echo "$group_info" | jq -r .now)
         node_display="$node_name"
 
         if [ -n "$node_name" ] && [ "$node_name" != "null" ]; then
             local node_enc=$(urlencode "$node_name")
-            local d=$(curl_api "/proxies/$node_enc/delay?timeout=2000&url=http://www.gstatic.com/generate_204" | jq -r '.delay // "N/A"')
-            [ "$d" != "N/A" ] && delay_display="${d}ms"
+            local node_type=$(curl_api "/proxies" | jq -r --arg n "$node_name" '.proxies[$n].type // ""')
+            if [ "$node_type" = "URLTest" ] || [ "$node_type" = "Selector" ] || [ "$node_type" = "Fallback" ] || [ "$node_type" = "LoadBalance" ]; then
+                local sub_info=$(curl_api "/proxies/$node_enc")
+                local sub_now=$(echo "$sub_info" | jq -r '.now // ""')
+                [ -n "$sub_now" ] && [ "$sub_now" != "null" ] && node_display="$node_name → $sub_now"
+                delay_display="Best:$(echo "$sub_info" | jq -r '[.all[] | . as $name | $root.proxies[$name].history[-1].delay // 99999] | map(select(. > 0 and . < 99999)) | min // "N/A"' --argjson root "$(curl_api "/proxies")")ms"
+            else
+                local d=$(curl_api "/proxies/$node_enc/delay?timeout=2000&url=http://www.gstatic.com/generate_204" | jq -r '.delay // "N/A"')
+                [ "$d" != "N/A" ] && delay_display="${d}ms"
+            fi
         fi
     fi
 
@@ -1278,7 +1298,11 @@ EOF
         ;;
 
     -s|-subscribe)
-        clashsub "$@"
+        if [ $# -gt 0 ]; then
+            clashsub use "$@"
+        else
+            clashsub ls
+        fi
         ;;
 
     -n|-node)
