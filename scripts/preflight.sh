@@ -407,12 +407,25 @@ _detect_rc() {
 _apply_rc() {
     _detect_rc
     local source_clashctl=". $CLASH_CMD_DIR/clashctl.sh"
+    local alias_block=""
+    if [ -t 0 ]; then
+        echo
+        _okcat "是否设置命令别名？ (推荐，可直接使用 mi / mihomo 代替 clashctl)"
+        printf "  [1] mi + mihomo\n  [2] 仅 mi\n  [3] 跳过\n👉 请选择 [1-3]: "
+        local alias_choice
+        read -r alias_choice
+        case "$alias_choice" in
+            1) alias_block=$'\nalias clash="clashctl"\nalias mihomo="clashctl"\nalias mi="clashctl"' ;;
+            2) alias_block=$'\nalias clash="clashctl"\nalias mi="clashctl"' ;;
+            *) alias_block="" ;;
+        esac
+    fi
     # shellcheck disable=SC2086
     tee -a "$SHELL_RC_BASH" $SHELL_RC_ZSH >/dev/null <<EOF
 
 $start_flag
 # 加载 clashctl 命令
-$source_clashctl
+$source_clashctl$alias_block
 # 新开 shell 时自动开启代理环境
 # watch_proxy
 $end_flag

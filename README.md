@@ -21,7 +21,7 @@ git clone --depth 1 https://github.com/unreading/clash-for-linux-fusion.git \
   && bash install.sh
 ```
 
-安装后在 shell 配置文件中添加别名（可选）：
+安装时会交互提示是否设置命令别名（`mi` / `mihomo`），也可手动添加：
 
 ```bash
 alias clash="clashctl"
